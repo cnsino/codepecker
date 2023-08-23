@@ -54,16 +54,17 @@ where
         let upload_url = format!("{}cp4/webInterface/postSourceCode.action", self.url);
         log::debug!("upload_url{:?}", upload_url);
         let file_path = Path::new(zip_file);
-        
+
         let mut file = fs::File::open(file_path)?;
         let metadata = fs::metadata(file_path)?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
 
         // 获取文件的 MIME 类型
-        let mime_type = mime_guess::from_path(&file_path)
+        let mime_type = mime_guess::from_path(file_path)
             .first_or_octet_stream()
-            .as_ref().to_string();
+            .as_ref()
+            .to_string();
         log::debug!("mime_type：{:?}", mime_type);
 
         let template = project.template.to_string();
@@ -113,11 +114,9 @@ where
                     log::info!("从服务端获取任务id完成!");
                     return Ok(task.to_string());
                 }
-            } else {
-                if let Some(error_msg) = results["errorMsg"].as_str() {
-                    log::error!("下发任务失败: {}!", error_msg.to_string());
-                    return Err(CodepeckerError::CustomInvalidInfo(error_msg.to_string()));
-                }
+            } else if let Some(error_msg) = results["errorMsg"].as_str() {
+                log::error!("下发任务失败: {}!", error_msg.to_string());
+                return Err(CodepeckerError::CustomInvalidInfo(error_msg.to_string()));
             }
         } else {
             log::debug!("{}", response.status());
@@ -186,11 +185,9 @@ where
                     log::info!("从服务端获取任务id完成!");
                     return Ok(task.to_string());
                 }
-            } else {
-                if let Some(error_msg) = results["errorMsg"].as_str() {
-                    log::error!("下发任务失败: {}!", error_msg.to_string());
-                    return Err(CodepeckerError::CustomInvalidInfo(error_msg.to_string()));
-                }
+            } else if let Some(error_msg) = results["errorMsg"].as_str() {
+                log::error!("下发任务失败: {}!", error_msg.to_string());
+                return Err(CodepeckerError::CustomInvalidInfo(error_msg.to_string()));
             }
         } else {
             log::debug!("{}", response.status());
@@ -249,12 +246,11 @@ where
                         ));
                     }
                 }
-            } else {
-                if let Some(error_msg) = response["errorMsg"].as_str() {
-                    log::error!("下发任务失败: {}!", error_msg.to_string());
-                    return Err(CodepeckerError::CustomInvalidInfo(error_msg.to_string()));
-                }
+            } else if let Some(error_msg) = response["errorMsg"].as_str() {
+                log::error!("下发任务失败: {}!", error_msg.to_string());
+                return Err(CodepeckerError::CustomInvalidInfo(error_msg.to_string()));
             }
+
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     }
@@ -284,9 +280,9 @@ where
             Ok(results)
         } else {
             log::error!("无法从服务端获取扫描结果,请检查URL地址及key值.");
-            return Err(CodepeckerError::CustomInvalidInfo(
+            Err(CodepeckerError::CustomInvalidInfo(
                 "无法从服务端获取扫描结果,请检查URL地址及key值".to_owned(),
-            ));
+            ))
         }
     }
 
