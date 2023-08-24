@@ -68,6 +68,11 @@ pub(crate) struct Codepecker {
     /// 设置 Codepecker 的taskid.
     #[arg(long, value_name = "Task ID")]
     pub(crate) task: Option<String>,
+
+    /// 设置 Codepecker 的缺陷级别,eg: 选择high表示high级别及以上即high和critical两种缺陷
+    #[arg(long, value_name = "Scan Severity",default_value = "info",value_parser = clap::builder::PossibleValuesParser::new(["info", "low", "medium", "high", "critical"]))]
+    pub(crate) severity: Option<String>,
+
     /// 设置 Codepecker 的扫描结果存储位置.
     #[arg(
         short,

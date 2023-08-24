@@ -286,17 +286,43 @@ where
         }
     }
 
+    fn filter_by_severity(&self, severity: &str, all_defects: Vec<Value>) -> Vec<Value> {
+        match severity {
+            "info" => all_defects
+                .into_iter()
+                .filter(|v| v["severityLevel"].as_i64().unwrap_or(0) <= 5)
+                .collect(),
+            "low" => all_defects
+                .into_iter()
+                .filter(|v| v["severityLevel"].as_i64().unwrap_or(0) <= 4)
+                .collect(),
+            "medium" => all_defects
+                .into_iter()
+                .filter(|v| v["severityLevel"].as_i64().unwrap_or(0) <= 3)
+                .collect(),
+            "high" => all_defects
+                .into_iter()
+                .filter(|v| v["severityLevel"].as_i64().unwrap_or(0) <= 2)
+                .collect(),
+            "critical" => all_defects
+                .into_iter()
+                .filter(|v| v["severityLevel"].as_i64().unwrap_or(0) == 1)
+                .collect(),
+            _ => vec![],
+        }
+    }
+
     // 获取检测结果
     pub(crate) async fn get_task_result(
         &self,
         task: &str,
+        severity: &str,
         output: &str,
     ) -> Result<(), CodepeckerError> {
         let result_url = format!("{}cp4/webInterface/getTaskResult.action", self.url);
         log::debug!("result_url{:?}", result_url);
         let mut all_defects = Vec::new();
         let mut request_num = 1;
-        let mut problem_count = 0;
         let info = self.query_statistics(task).await?;
         loop {
             let mut params = HashMap::new();
@@ -324,7 +350,6 @@ where
                     if defects.is_empty() {
                         break;
                     } else {
-                        problem_count = results.get("problemCount").unwrap().as_u64().unwrap();
                         all_defects.extend_from_slice(defects);
                         request_num += 1;
                     }
@@ -338,11 +363,15 @@ where
                 ));
             }
         }
+        let filter_problems = self.filter_by_severity(severity, all_defects);
+        let problem_count = filter_problems.len();
+        log::info!("筛选{severity}及级别以上的缺陷或漏洞,数量为{problem_count}个");
         let result_json = serde_json::json!({
             "task_id": task,
+            "severity": severity,
             "problem_count": problem_count,
             "info": info,
-            "problems": all_defects
+            "problems": filter_problems
         });
         // 将 JSON 写入文件
         let file = File::create(output)?;

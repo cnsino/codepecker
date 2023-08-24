@@ -17,16 +17,17 @@ pub async fn builder() -> Result<(), CodepeckerError> {
     let pecker = pecker::Pecker::new(args.url.unwrap(), args.proxy, args.key.unwrap()).await?;
     log::debug!("{pecker:?}");
 
-    if let (Some(task), Some(output)) = (&args.task, &args.output) {
+    if let (Some(task), Some(severity), Some(output)) = (&args.task, &args.severity, &args.output) {
         log::info!("外部传入扫描id{:?}", task);
-        pecker.get_task_result(task, output).await?;
+        pecker.get_task_result(task, severity, output).await?;
         return Ok(());
     }
 
-    if let (Some(project_name), Some(lang), Some(template), Some(output)) = (
+    if let (Some(project_name), Some(lang), Some(template), Some(severity), Some(output)) = (
         args.project,
         args.lang,
         args.template,
+        &args.severity,
         &args.output,
     ) {
         let rule = args.rule;
@@ -34,8 +35,8 @@ pub async fn builder() -> Result<(), CodepeckerError> {
         let project = Project {
             name: project_name,
             lang,
-            template, 
-            rule, 
+            template,
+            rule,
             group,
         };
         log::debug!("输入的参数：项目：{:?}", project);
@@ -75,7 +76,9 @@ pub async fn builder() -> Result<(), CodepeckerError> {
             let scan_status = pecker.query_task_status(taskid.as_str()).await?;
             if scan_status {
                 log::info!("代码扫描任务: {:?}扫描完成", taskid);
-                pecker.get_task_result(taskid.as_str(), output).await?;
+                pecker
+                    .get_task_result(taskid.as_str(), severity, output)
+                    .await?;
             }
         }
     } else {
