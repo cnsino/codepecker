@@ -90,4 +90,8 @@ pub(crate) struct Codepecker {
             .map(|s| log::LevelFilter::from_str(&s).unwrap()),
     )]
     pub(crate) log_level: log::LevelFilter,
+
+    /// 设置是否获取源文件
+    #[arg(long, value_name = "Get Source", default_value = "false")]
+    pub(crate) get_source: Option<bool>,
 }

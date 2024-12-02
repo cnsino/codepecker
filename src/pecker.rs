@@ -316,8 +316,10 @@ where
     pub(crate) async fn get_task_result(
         &self,
         task: &str,
+        language: &str,
         severity: &str,
         output: &str,
+        get_source: bool,
     ) -> Result<(), CodepeckerError> {
         let result_url = format!("{}cp4/webInterface/getTaskResult.action", self.url);
         log::debug!("result_url{:?}", result_url);
@@ -363,7 +365,107 @@ where
                 ));
             }
         }
-        let filter_problems = self.filter_by_severity(severity, all_defects);
+        let mut filter_problems = self.filter_by_severity(severity, all_defects);
+        // 创建一个HashMap(文件路径, 文件内容的字节数组)，用于存储每个文件的字节数组
+        let mut file_content_bytes_map: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+        // 遍历filter_problems中的每个缺陷或漏洞，通过filePath获取文件内容的字节数组，并存储到file_content_bytes_map中
+        // 为filter_problems中的每个缺陷或漏洞添加solution(包括：wiki_description,wiki_detail,wiki_example 字段)
+        for problem in &mut filter_problems {
+            if let Some(error_code) = problem.get("errorCode").and_then(|v| v.as_str()) {
+                // 获取解决方案详情
+                log::debug!(
+                    "获取解决方案详情,errorCode:{},language:{}",
+                    error_code,
+                    language
+                );
+                if let Ok(solution) = self.get_solution_detail(error_code, language).await {
+                    if let Some(description) =
+                        solution.get("wiki_description").and_then(|v| v.as_str())
+                    {
+                        log::debug!("description: {}", description);
+                        problem["solution"] = serde_json::json!({
+                            "wiki_description": description,
+                            // 其他字段
+                            "wiki_detail": solution.get("wiki_detail").unwrap_or(&serde_json::json!("")),
+                            "wiki_example": solution.get("wiki_example").unwrap_or(&serde_json::json!("")),
+                        });
+                    }
+                }
+            }
+            // 根据get_source 参数决定是否获取文件内容的字节数组
+            if get_source {
+                // 通过filePath 获取文件内容的字节数组, 响应为json格式，文件内容对应byteArrayOfFiles字段(纯数字list),直接返回
+                if let Some(file_path) = problem.get("filePath").and_then(|v| v.as_str()) {
+                    let mut file_bytes = Vec::new();
+                    // 判断文件是否已经存在于file_content_bytes_map中，则设置file_content_bytes字段
+                    if file_content_bytes_map.contains_key(file_path) {
+                        log::debug!("文件{}已经存在于file_content_bytes_map中", file_path);
+                        // problem["file_content_bytes"] =
+                        //     serde_json::json!(file_content_bytes_map.get(file_path).unwrap());
+                        file_bytes = file_content_bytes_map.get(file_path).unwrap().clone();
+                    } else {
+                        // 获取文件内容的字节数组
+                        log::debug!("获取文件内容的字节数组,filePath:{}", file_path);
+                        if let Ok(file_content_bytes) = self.get_file_content_bytes(file_path).await
+                        {
+                            if let Some(byte_array_of_files) = file_content_bytes
+                                .get("byteArrayOfFiles")
+                                .and_then(|v| v.as_array())
+                            {
+                                log::debug!("byte_array_of_files: {:?}", byte_array_of_files);
+                                // problem["file_content_bytes"] =
+                                //     serde_json::json!(byte_array_of_files);
+                                file_bytes = byte_array_of_files.clone();
+                                file_content_bytes_map
+                                    .insert(file_path.to_string(), byte_array_of_files.clone());
+                            }
+                        }
+                    }
+                    problem["file_content_bytes"] = serde_json::json!(file_bytes);
+                }
+
+                // 遍历problem中的traceBlock字段，通过file获取文件内容的字节数组
+                if let Some(trace_blocks) =
+                    problem.get_mut("traceBlock").and_then(|v| v.as_array_mut())
+                {
+                    for trace_block in trace_blocks {
+                        // 通过file获取文件内容的字节数组
+                        let mut file_bytes = Vec::new();
+                        if let Some(file) = trace_block.get("file").and_then(|v| v.as_str()) {
+                            // 判断文件是否已经存在于file_content_bytes_map中，则设置file_content_bytes字段
+                            if file_content_bytes_map.contains_key(file) {
+                                log::debug!("文件{}已经存在于file_content_bytes_map中", file);
+                                // trace_block["file_content_bytes"] =
+                                //     serde_json::json!(file_content_bytes_map.get(file).unwrap());
+                                file_bytes = file_content_bytes_map.get(file).unwrap().clone();
+                            } else {
+                                // 获取文件内容的字节数组
+                                log::debug!("获取文件内容的字节数组,filePath:{}", file);
+                                if let Ok(file_content_bytes) =
+                                    self.get_file_content_bytes(file).await
+                                {
+                                    if let Some(byte_array_of_files) = file_content_bytes
+                                        .get("byteArrayOfFiles")
+                                        .and_then(|v| v.as_array())
+                                    {
+                                        log::debug!(
+                                            "byte_array_of_files: {:?}",
+                                            byte_array_of_files
+                                        );
+                                        // trace_block["file_content_bytes"] =
+                                        //     serde_json::json!(byte_array_of_files);
+                                        file_bytes = byte_array_of_files.clone();
+                                        file_content_bytes_map
+                                            .insert(file.to_string(), byte_array_of_files.clone());
+                                    }
+                                }
+                            }
+                            trace_block["file_content_bytes"] = serde_json::json!(file_bytes);
+                        }
+                    }
+                }
+            }
+        }
         let problem_count = filter_problems.len();
         log::info!("筛选{severity}及级别以上的缺陷或漏洞,数量为{problem_count}个");
         let result_json = serde_json::json!({
@@ -379,6 +481,78 @@ where
         serde_json::to_writer_pretty(file, &result_json)?;
         log::info!("将扫描结果写入文件{:?}完成!", output);
         Ok(())
+    }
+
+    // 通过errorCode和language获取solution详情
+    pub(crate) async fn get_solution_detail(
+        &self,
+        error_code: &str,
+        language: &str,
+    ) -> Result<Value, CodepeckerError> {
+        let solution_url = format!(
+            "{}cp4/webInterface/queryWikiByLanguageErrorid.action",
+            self.url
+        );
+        log::debug!("solution_url{:?}", solution_url);
+        let mut params = HashMap::new();
+        params.insert("errorid", error_code);
+        params.insert("language", language);
+        params.insert("auth", &self.key);
+        let response = self
+            .client
+            .post(&solution_url)
+            .form(&params)
+            .send()
+            .await
+            .map_err(|_| CodepeckerError::UnableToConnect(solution_url.to_string()))?;
+
+        if response.status().is_success() {
+            log::info!("获取解决方案请求完成!");
+            // 提取响应中的wiki_description,wiki_detail,wiki_example 字段
+            let results = response
+                .json::<Value>()
+                .await
+                .map_err(|_| CodepeckerError::UnableToParseJson)?;
+            Ok(results)
+        } else {
+            log::error!("无法从服务端获取解决方案,请检查URL地址及key值.");
+            Err(CodepeckerError::CustomInvalidInfo(
+                "无法从服务端获取解决方案,请检查URL地址及key值".to_owned(),
+            ))
+        }
+    }
+
+    // 通过path获取文件内容的字节数组, 响应为json格式，文件内容对应byteArrayOfFiles字段(纯数字list),直接返回
+    pub(crate) async fn get_file_content_bytes(
+        &self,
+        path: &str,
+    ) -> Result<Value, CodepeckerError> {
+        let file_url = format!("{}cp4/webInterface/getFile.action", self.url);
+        log::debug!("file_url{:?}", file_url);
+        let mut params = HashMap::new();
+        params.insert("path", path);
+        params.insert("auth", &self.key);
+        let response = self
+            .client
+            .post(&file_url)
+            .form(&params)
+            .send()
+            .await
+            .map_err(|_| CodepeckerError::UnableToConnect(file_url.to_string()))?;
+        if response.status().is_success() {
+            log::info!("获取文件内容请求完成!");
+            // 提取响应中的wiki_description,wiki_detail,wiki_example 字段
+            let results = response
+                .json::<Value>()
+                .await
+                .map_err(|_| CodepeckerError::UnableToParseJson)?;
+            Ok(results)
+        } else {
+            log::error!("无法从服务端获取解决方案,请检查URL地址及key值.");
+            Err(CodepeckerError::CustomInvalidInfo(
+                "无法从服务端获取解决方案,请检查URL地址及key值".to_owned(),
+            ))
+        }
     }
 
     // 获取开源组件检测结果统计信息
